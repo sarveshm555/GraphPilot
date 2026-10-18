@@ -12,6 +12,14 @@
 
 ---
 
+## 🔗 Project Links
+
+- **Live Demo:** https://graphpilot-pi.vercel.app/
+- **Demo Video:** https://youtu.be/Wuc9eSvyc0E
+- **GitHub Repository:** https://github.com/sarveshm555/GraphPilot
+
+---
+
 ## 🚀 Overview
 
 ## 🔗 Project Links
