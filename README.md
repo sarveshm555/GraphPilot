@@ -143,6 +143,199 @@ npm run dev
 
 ---
 
+## ☁️ Cloud Backend Deployment
+
+This section details the production cloud deployment architecture for hosting GraphPilot with a **Vercel frontend**, a **Render FastAPI backend**, and a **FalkorDB Cloud** managed graph database.
+
+> [!NOTE]
+> The FalkorDB Cloud instance is currently being provisioned. Follow the setup instructions below to complete remote database connectivity once the instance status is Active.
+
+### 1. Deployment Architecture
+
+```text
+User Browser
+     |
+     v
+Vercel Frontend
+     |
+     | HTTPS API Requests
+     v
+Render FastAPI Backend
+     |
+     | Graph Database Connection
+     v
+FalkorDB Cloud
+```
+
+- **Vercel Frontend (`https://graphpilot-pi.vercel.app/`)**: Delivers the compiled React 19 / Vite single-page application and interactive React Flow graph visualization.
+- **Render Backend**: Runs the Python 3 FastAPI application with Uvicorn ASGI server in the Singapore region, handling Cypher tool execution and AI orchestration.
+- **FalkorDB Cloud**: Managed graph database holding the organizational nodes, relationships, and persistent memory across people, teams, systems, incidents, and decisions.
+
+---
+
+### 2. FalkorDB Cloud Setup
+
+To connect GraphPilot to a remote FalkorDB instance:
+
+1. **Sign Up / Log In**: Access the [FalkorDB Cloud Console](https://app.falkordb.cloud/).
+2. **Create Database**: Click **Create Database** and select the **Free Tier** subscription.
+3. **Select Region**: Choose a region geographically close to your backend (e.g., Singapore / AWS Asia Pacific).
+4. **Provisioning State**: Monitor the database status in the FalkorDB dashboard. Wait until the state transitions from **Provisioning / Creating** to **Active / Ready** before initiating backend connections.
+5. **Obtain Connection Details**:
+   - **Host / Endpoint**: The remote server address (e.g., FQDN or IP address provided in the dashboard).
+   - **Port**: The TCP port (default: `6379`).
+   - **Password**: The authentication token or password generated for the database.
+   - **TLS / SSL**: Verify if TLS encryption is required by the cloud provider configuration.
+6. **Credential Privacy**: Never commit FalkorDB credentials to git or public repositories. Store them strictly in Render's environment variables.
+
+---
+
+### 3. Render Backend Deployment
+
+Configure the FastAPI backend on Render using the following verified repository parameters:
+
+- **Service Type**: Web Service
+- **Repository**: `sarveshm555/GraphPilot`
+- **Branch**: `main`
+- **Runtime**: `Python 3`
+- **Region**: `Singapore`
+- **Instance Plan**: `Free`
+- **Root Directory**: *(Leave empty to use repository root)*
+- **Build Command**:
+  ```bash
+  pip install -r backend/requirements.txt
+  ```
+- **Start Command**:
+  ```bash
+  uvicorn app.main:app --app-dir backend --host 0.0.0.0 --port $PORT
+  ```
+- **Health Check Path**: `/health`
+
+> [!IMPORTANT]
+> The `$PORT` environment variable is dynamically allocated by Render. The `--port $PORT` flag ensures Uvicorn binds to Render's assigned port.
+
+---
+
+### 4. Environment Variables
+
+Configure the following environment variables in the Render Dashboard (**Web Service -> Environment -> Environment Variables**):
+
+| Variable Name | Required / Optional | Purpose | Where to Obtain Value |
+| :--- | :--- | :--- | :--- |
+| `APP_ENV` | Optional | Defines application execution mode (`production` or `development`) | Set to `production` on Render |
+| `CORS_ORIGINS` | Required for Cloud | JSON array of allowed origins for cross-origin browser requests | Set to `["https://graphpilot-pi.vercel.app","http://localhost:5173"]` |
+| `FALKORDB_HOST` | Required for Cloud | Hostname or FQDN of the remote FalkorDB server | FalkorDB Cloud Dashboard -> Instance Details -> Endpoint |
+| `FALKORDB_PORT` | Optional (default: `6379`) | TCP port on which FalkorDB accepts connections | FalkorDB Cloud Dashboard -> Instance Details -> Port |
+| `FALKORDB_PASSWORD` | Required for Cloud | Authentication password for remote FalkorDB instance | FalkorDB Cloud Dashboard -> Security / Credentials |
+| `FALKORDB_GRAPH_NAME` | Optional (default: `graphpilot`) | Target graph workspace name queried and seeded by the app | Choose a custom name or keep `graphpilot` |
+| `LLM_PROVIDER` | Optional (default: `mock`) | AI reasoning mode: `mock` (deterministic zero-key offline) or `openai` (live LLM) | Set to `openai` for live model or `mock` for deterministic demo |
+| `OPENAI_API_KEY` | Required if `LLM_PROVIDER=openai` | Secret API key for OpenAI model invocation and tool calling | OpenAI Developer Platform (`platform.openai.com/api-keys`) |
+| `OPENAI_MODEL` | Optional (default: `gpt-4o-mini`) | OpenAI model identifier used for bounded tool calling | OpenAI Model Documentation (e.g., `gpt-4o-mini`) |
+| `OPENAI_TIMEOUT_SECONDS` | Optional (default: `30.0`) | Client timeout limit in seconds for OpenAI API requests | Configurable integer or float (e.g., `30.0`) |
+| `DOCUMENT_STORAGE_PATH` | Optional (default: `./data/documents`) | Container directory for uploaded postmortem and ADR files | Default container storage path |
+| `LOG_LEVEL` | Optional (default: `INFO`) | Logging verbosity (`INFO`, `DEBUG`, `WARNING`, `ERROR`) | Set to `INFO` for standard production logs |
+
+---
+
+### 5. Vercel Frontend Connectivity
+
+The frontend API client in [`frontend/src/services/api.ts`](frontend/src/services/api.ts) currently dispatches requests to relative root paths (`/api/...`). To connect the Vercel-hosted frontend to the Render backend, choose one of two supported approaches:
+
+#### Approach A: Vercel Edge Rewrites (Recommended — Zero Code Changes)
+Add a `vercel.json` file in the `frontend/` directory (or repository root) to transparently proxy requests to Render:
+
+```json
+{
+  "rewrites": [
+    {
+      "source": "/api/:path*",
+      "destination": "https://<your-render-service>.onrender.com/api/:path*"
+    },
+    {
+      "source": "/health",
+      "destination": "https://<your-render-service>.onrender.com/health"
+    }
+  ]
+}
+```
+*Benefits*: Eliminates cross-origin preflight requests, preserves relative URLs in code, and avoids browser CORS errors.
+
+#### Approach B: Client Environment Variable
+1. In the Vercel Project Dashboard (**Settings -> Environment Variables**), set:
+   ```bash
+   VITE_API_BASE_URL=https://<your-render-service>.onrender.com
+   ```
+2. Update [`frontend/src/services/api.ts`](frontend/src/services/api.ts) to resolve:
+   ```typescript
+   const API_BASE = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/+$/, '') + '/api';
+   ```
+3. Trigger a redeployment in Vercel (**Deployments -> Redeploy**) after saving variables.
+
+#### CORS Requirement on Backend
+Ensure the Render backend has `CORS_ORIGINS` configured to include the Vercel domain:
+```bash
+CORS_ORIGINS=["https://graphpilot-pi.vercel.app","http://localhost:5173"]
+```
+
+---
+
+### 6. Deployment Verification Checklist
+
+Verify each layer of the cloud deployment systematically:
+
+- [ ] **Render Build & Start**: Check Render deployment logs to confirm successful package installation and message: `Application startup complete`.
+- [ ] **Health Endpoint**: Send a GET request to `https://<your-render-service>.onrender.com/health`. Verify the returned JSON confirms:
+  ```json
+  {
+    "status": "healthy",
+    "service": "GraphPilot Company Brain API",
+    "version": "1.0.0",
+    "database": {
+      "status": "healthy",
+      "indicator": "connected",
+      "backend": "falkordb-server",
+      "connected_to_remote": true
+    }
+  }
+  ```
+- [ ] **Graph Overview**: Send a GET request to `https://<your-render-service>.onrender.com/api/overview` to verify `total_nodes` and `total_relationships` reflect the seeded graph.
+- [ ] **Multi-Hop Cypher Traversal**: Query `https://<your-render-service>.onrender.com/api/graph/path?start=Project%20Alpha&end=Priya%20Sharma` to verify real-time path discovery.
+- [ ] **Diagnostic LLM Connectivity**: Send a POST request to `https://<your-render-service>.onrender.com/api/llm/test` to verify provider status (`llm_active` or `mock_offline`).
+- [ ] **Vercel Frontend Communication**: Open `https://graphpilot-pi.vercel.app/` in your browser. Verify the header displays `FalkorDB` with a green indicator dot and active node count.
+- [ ] **AI Assistant Q&A**: Submit the question *"Which systems depend on the Payment API?"* in the Command Center to confirm end-to-end question answering and graph path highlighting.
+
+---
+
+### 7. Troubleshooting
+
+| Symptom | Probable Cause | Recommended Action |
+| :--- | :--- | :--- |
+| **Backend Build Fails on Render** | Missing dependency or Python mismatch | Check Render build logs. Ensure Python 3 runtime is selected and `pip install -r backend/requirements.txt` succeeds. |
+| **Database shows `fallback_active`** | FalkorDB Cloud is still provisioning or credentials invalid | Verify instance status in FalkorDB Cloud dashboard is **Active**. Double-check `FALKORDB_HOST`, `FALKORDB_PORT`, and `FALKORDB_PASSWORD` in Render environment settings. |
+| **Browser Console: CORS Error** | `CORS_ORIGINS` missing Vercel URL | Ensure `CORS_ORIGINS` on Render is valid JSON containing `"https://graphpilot-pi.vercel.app"`. Restart the Web Service after editing. |
+| **Frontend API calls return 404** | Missing Vercel rewrite or incorrect API base | Ensure `vercel.json` rewrites or `VITE_API_BASE_URL` points to the exact Render service URL (`https://<service>.onrender.com`). |
+| **Slow Initial Request (30-50s)** | Render Free-Tier instance cold start | Render free instances spin down after 15 minutes of inactivity. Allow up to 50 seconds for the initial wake-up request. |
+| **AI Assistant Reports Key Missing** | `LLM_PROVIDER=openai` without valid key | Set `OPENAI_API_KEY` in Render environment settings, or set `LLM_PROVIDER=mock` to switch to deterministic offline demo mode. |
+
+To inspect live backend logs without exposing secrets, use the **Logs** tab in the Render Dashboard.
+
+---
+
+### 8. Security and Free-Tier Limitations
+
+- **Secret Isolation**: Never commit `.env` or production credentials to GitHub. Render securely encrypts environment variables at rest.
+- **Frontend Bundle Hygiene**: The Vercel frontend requires zero database passwords or OpenAI API keys; all sensitive graph operations remain strictly on the backend.
+- **Render Free Tier**:
+  - Instances enter sleep mode after 15 minutes of HTTP inactivity.
+  - 512 MB RAM limit and shared CPU.
+  - Monthly outbound bandwidth allowance.
+- **FalkorDB Cloud Free Tier**:
+  - Review memory and storage quotas in your FalkorDB Cloud plan.
+  - Note single-zone topology and backup schedules applicable to the free subscription.
+- **Production Readiness**: For high-availability enterprise environments, upgrade to persistent paid tiers on both Render and FalkorDB Cloud to eliminate cold starts and resource throttles.
+
+---
+
 ## 🧪 Automated Testing (31 of 31 Passed)
 
 GraphPilot includes 31 automated tests covering LLM tool calling, parameter validation, health, schema, multi-hop traversals, unknown entity refusal, blast radius analysis, entity directory search, memory lifecycle, and duplicate document ingestion:
