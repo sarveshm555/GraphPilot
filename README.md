@@ -22,12 +22,6 @@
 
 ## 🚀 Overview
 
-## 🔗 Project Links
-
-- **Live Demo:** https://graphpilot-pi.vercel.app/
-- **Demo Video:** https://youtu.be/Wuc9eSvyc0E
-- **GitHub Repository:** https://github.com/sarveshm555/GraphPilot
-
 **GraphPilot** is an explainable enterprise AI knowledge assistant that uses **FalkorDB** as its primary graph context layer. Unlike traditional vector RAG systems that rely on fuzzy text similarity, GraphPilot traverses explicit organizational relationships across:
 
 - **People** (Engineers, Architects, Product Managers)
