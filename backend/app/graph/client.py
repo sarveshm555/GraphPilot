@@ -15,7 +15,7 @@ class FalkorDBClient:
     """
     FalkorDB Client with transparent connection management & explicit status reporting.
     Distinguishes:
-    - real FalkorDB connection
+    - real FalkorDB connection (with TLS/SSL support for FalkorDB Cloud)
     - in-memory fallback
     - database unavailable
     Includes dynamic auto-reconnect logic so whenever FalkorDB becomes available,
@@ -25,26 +25,53 @@ class FalkorDBClient:
         self,
         host: str = settings.FALKORDB_HOST,
         port: int = settings.FALKORDB_PORT,
-        graph_name: str = settings.FALKORDB_GRAPH_NAME
+        graph_name: str = settings.FALKORDB_GRAPH_NAME,
+        ssl: Optional[bool] = None,
+        ssl_cert_reqs: Optional[str] = None,
+        connect_timeout: float = settings.FALKORDB_CONNECT_TIMEOUT,
+        socket_timeout: float = settings.FALKORDB_SOCKET_TIMEOUT,
     ):
         self.host = host
         self.port = port
         self.graph_name = graph_name
+        self.ssl = ssl if ssl is not None else settings.FALKORDB_SSL
+        self.ssl_cert_reqs = ssl_cert_reqs or settings.FALKORDB_SSL_CERT_REQS
+        self.connect_timeout = connect_timeout
+        self.socket_timeout = socket_timeout
         self.real_client = None
         self.graph = None
         self.is_connected = False
         self.connection_error: Optional[str] = None
         self._init_connection()
 
-    def _try_connect_host(self, host: str) -> bool:
+    @property
+    def is_remote_host(self) -> bool:
+        return self.host.lower().strip() not in ("localhost", "127.0.0.1")
+
+    @property
+    def effective_ssl(self) -> bool:
+        if self.ssl is not None:
+            return self.ssl
+        # FalkorDB Cloud instances require TLS; localhost Docker defaults to plain TCP
+        return self.is_remote_host
+
+    def _try_connect_host(self, host: str, ssl_enabled: bool) -> bool:
         if not _FALKORDB_AVAILABLE:
             self.connection_error = "falkordb library not installed"
             return False
+
+        cert_reqs = self.ssl_cert_reqs or "required"
+
         try:
             client = FalkorDB(
                 host=host,
                 port=self.port,
-                password=settings.FALKORDB_PASSWORD or None
+                password=settings.FALKORDB_PASSWORD or None,
+                ssl=ssl_enabled,
+                ssl_cert_reqs=cert_reqs if ssl_enabled else "required",
+                ssl_check_hostname=False,
+                socket_timeout=self.socket_timeout,
+                socket_connect_timeout=self.connect_timeout,
             )
             g = client.select_graph(self.graph_name)
             # Test connectivity
@@ -53,10 +80,16 @@ class FalkorDBClient:
             self.graph = g
             self.is_connected = True
             self.connection_error = None
-            logger.info(f"Connected to real FalkorDB server at {host}:{self.port}, graph: {self.graph_name}")
+            logger.info(
+                f"Connected to real FalkorDB server at {host}:{self.port} "
+                f"(ssl={ssl_enabled}, cert_reqs={cert_reqs if ssl_enabled else 'N/A'}), "
+                f"graph: {self.graph_name}"
+            )
             return True
         except Exception as e:
-            self.connection_error = str(e)
+            err_msg = str(e)
+            self.connection_error = err_msg
+            logger.warning(f"FalkorDB connection failed for {host}:{self.port} (ssl={ssl_enabled}): {err_msg}")
             return False
 
     def _init_connection(self):
@@ -65,7 +98,7 @@ class FalkorDBClient:
     def ensure_connected(self, force: bool = False) -> bool:
         """
         Verify connection to real FalkorDB server.
-        If disconnected or forced, attempts connection to configured host (and 127.0.0.1 IPv4 fallback).
+        If disconnected or forced, attempts connection to configured host (and 127.0.0.1 IPv4 fallback for localhost).
         """
         if self.is_connected and self.graph and not force:
             try:
@@ -74,18 +107,25 @@ class FalkorDBClient:
             except Exception as e:
                 logger.warning(f"Connection check failed: {e}. Attempting reconnect...")
                 self.is_connected = False
+                self.real_client = None
+                self.graph = None
                 self.connection_error = str(e)
 
+        # Determine SSL configuration
+        ssl_enabled = self.effective_ssl
+
         # 1. Attempt connection to configured host
-        if self._try_connect_host(self.host):
+        if self._try_connect_host(self.host, ssl_enabled=ssl_enabled):
             return True
 
         # 2. If configured host was "localhost", also attempt direct 127.0.0.1 (Windows IPv4)
         if self.host.lower() == "localhost":
-            if self._try_connect_host("127.0.0.1"):
+            if self._try_connect_host("127.0.0.1", ssl_enabled=False):
                 return True
 
         self.is_connected = False
+        self.real_client = None
+        self.graph = None
         self._init_in_memory_engine()
         return False
 
@@ -117,6 +157,8 @@ class FalkorDBClient:
                 if any(k in err_str.lower() for k in ["connection refused", "connection reset", "broken pipe", "timeout"]):
                     logger.warning(f"FalkorDB connection dropped during query: {e}. Falling back to in-memory.")
                     self.is_connected = False
+                    self.real_client = None
+                    self.graph = None
                     self.connection_error = str(e)
                     self._init_in_memory_engine()
                     return self.in_memory_engine.query(cypher, params)
@@ -144,9 +186,10 @@ class FalkorDBClient:
             "backend": "falkordb-server" if is_live else "falkordb-in-memory-engine",
             "host": self.host,
             "port": self.port,
+            "ssl": self.effective_ssl,
             "graph_name": self.graph_name,
             "connected_to_remote": is_live,
-            "query_target": f"falkordb-server ({self.host}:{self.port})" if is_live else "in-memory-engine",
+            "query_target": f"falkordb-server ({self.host}:{self.port}, ssl={self.effective_ssl})" if is_live else "in-memory-engine",
             "connection_error": None if is_live else self.connection_error
         }
 

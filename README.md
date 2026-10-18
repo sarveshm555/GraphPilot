@@ -228,6 +228,8 @@ Configure the following environment variables in the Render Dashboard (**Web Ser
 | `FALKORDB_PORT` | Optional (default: `6379`) | TCP port on which FalkorDB accepts connections | FalkorDB Cloud Dashboard -> Instance Details -> Port |
 | `FALKORDB_PASSWORD` | Required for Cloud | Authentication password for remote FalkorDB instance | FalkorDB Cloud Dashboard -> Security / Credentials |
 | `FALKORDB_GRAPH_NAME` | Optional (default: `graphpilot`) | Target graph workspace name queried and seeded by the app | Choose a custom name or keep `graphpilot` |
+| `FALKORDB_SSL` | Optional (default: auto: `true` for cloud, `false` for localhost) | Explicitly toggle TLS/SSL encryption for FalkorDB | Optional override (`true` or `false`) |
+| `FALKORDB_SSL_CERT_REQS` | Optional (default: `required`) | TLS certificate verification requirement (`required`, `none`, `optional`). Never disabled automatically. | Optional certificate validation mode |
 | `LLM_PROVIDER` | Optional (default: `mock`) | AI reasoning mode: `mock` (deterministic zero-key offline) or `openai` (live LLM) | Set to `openai` for live model or `mock` for deterministic demo |
 | `OPENAI_API_KEY` | Required if `LLM_PROVIDER=openai` | Secret API key for OpenAI model invocation and tool calling | OpenAI Developer Platform (`platform.openai.com/api-keys`) |
 | `OPENAI_MODEL` | Optional (default: `gpt-4o-mini`) | OpenAI model identifier used for bounded tool calling | OpenAI Model Documentation (e.g., `gpt-4o-mini`) |
@@ -336,9 +338,9 @@ To inspect live backend logs without exposing secrets, use the **Logs** tab in t
 
 ---
 
-## 🧪 Automated Testing (31 of 31 Passed)
+## 🧪 Automated Testing (44 of 44 Passed)
 
-GraphPilot includes 31 automated tests covering LLM tool calling, parameter validation, health, schema, multi-hop traversals, unknown entity refusal, blast radius analysis, entity directory search, memory lifecycle, and duplicate document ingestion:
+GraphPilot includes 44 automated tests covering LLM tool calling, parameter validation, health, schema, multi-hop traversals, unknown entity refusal, blast radius analysis, entity directory search, memory lifecycle, duplicate document ingestion, and FalkorDB Cloud TLS/SSL connection handling:
 
 ```powershell
 .\venv\Scripts\python -m pytest backend/tests -v

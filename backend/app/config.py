@@ -1,5 +1,5 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from typing import List
+from typing import List, Optional
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
@@ -14,6 +14,10 @@ class Settings(BaseSettings):
     FALKORDB_PORT: int = 6379
     FALKORDB_PASSWORD: str = ""
     FALKORDB_GRAPH_NAME: str = "graphpilot"
+    FALKORDB_SSL: Optional[bool] = None
+    FALKORDB_SSL_CERT_REQS: Optional[str] = None
+    FALKORDB_CONNECT_TIMEOUT: float = 5.0
+    FALKORDB_SOCKET_TIMEOUT: float = 10.0
     
     # LLM Settings
     LLM_PROVIDER: str = "mock"  # "mock", "openai", "gemini"
@@ -53,5 +57,16 @@ class Settings(BaseSettings):
         if self.is_mock_llm:
             return False
         return bool(self.effective_api_key)
+
+    @property
+    def is_falkordb_remote(self) -> bool:
+        return self.FALKORDB_HOST.lower().strip() not in ("localhost", "127.0.0.1")
+
+    @property
+    def effective_falkordb_ssl(self) -> bool:
+        if self.FALKORDB_SSL is not None:
+            return self.FALKORDB_SSL
+        # FalkorDB Cloud instances require TLS; localhost Docker defaults to plain TCP
+        return self.is_falkordb_remote
 
 settings = Settings()
